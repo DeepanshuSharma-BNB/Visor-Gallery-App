@@ -94,6 +94,12 @@ connection=VISOR.connect(msg=>{
       else showWait();break;
     case 'image':onPhoto(msg.index,msg.data);break;
     case 'video_link':showInternetVideo(msg.url);break;
+    case 'video_command':
+      if(activeMode==='video'){
+        if(msg.action==='seek'&&Number.isFinite(msg.seconds))movie.currentTime=Math.max(0,Math.min(movie.duration||1e9,movie.currentTime+Math.max(-30,Math.min(30,msg.seconds))));
+        else if(msg.action==='toggle'){movie.paused?movie.play().catch(()=>{}):movie.pause();}
+      }
+      break;
     case 'video_progress':
       if(msg.total){showWait();waiting.textContent='Receiving encrypted video… '+Math.round(100*msg.bytes/msg.total)+'%';}
       break;
@@ -120,8 +126,8 @@ $('forward').onclick=()=>move(1);
 $('pause').onclick=()=>activeMode==='video'?(movie.paused?movie.play().catch(()=>{}):movie.pause()):play(!playing);
 window.addEventListener('keydown',e=>{
   const tag=document.activeElement?.tagName;
-  if(e.key==='ArrowLeft'){e.preventDefault();move(-1);}
-  else if(e.key==='ArrowRight'){e.preventDefault();move(1);}
+  if(e.key==='ArrowLeft'){e.preventDefault();if(activeMode==='video')movie.currentTime=Math.max(0,movie.currentTime-10);else move(-1);}
+  else if(e.key==='ArrowRight'){e.preventDefault();if(activeMode==='video')movie.currentTime=Math.min(movie.duration||1e9,movie.currentTime+10);else move(1);}
   else if(e.key==='ArrowUp'){e.preventDefault();zoomBy(1);}
   else if(e.key==='ArrowDown'){e.preventDefault();zoomBy(-1);}
   else if((e.key==='Enter'||e.key===' ')&&tag!=='BUTTON'){e.preventDefault();if(activeMode==='video'){movie.paused?movie.play().catch(()=>{}):movie.pause();}else if(activeMode==='image')play(!playing);}
