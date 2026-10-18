@@ -55,6 +55,7 @@ const VISOR = (() => {
     let room=null, code='', connected=false, desiredCode='', pairTimer=null, seq=0;
     let sending=Promise.resolve(),directSending=Promise.resolve();let reassembly=new Map();let generation=0;let heartbeat=null,lastPong=0;
     let pc=null,dc=null,directReady=false,media=null,mediaParts=[],mediaBytes=0,mediaStarted=0;
+    let pendingIce=[];
     let seen=new Map();const MAX_VIDEO=25*1024*1024;
     function resetRTC(){
       directReady=false;if(dc){try{dc.close()}catch{}}if(pc){try{pc.close()}catch{}}
@@ -99,12 +100,16 @@ const VISOR = (() => {
         if(initiator){setupChannel(peer.createDataChannel('visor-v4',{ordered:true}));await peer.setLocalDescription(await peer.createOffer());queue({type:'offer',sdp:peer.localDescription.toJSON()});}
       }catch(e){local({type:'direct',available:false});}
     }
+    async function flushIce(){while(pc&&pc.remoteDescription&&pendingIce.length){try{await pc.addIceCandidate(pendingIce.shift())}catch{}}}
     async function rtcSignal(msg){
       try{
         if(msg.type==='offer'){
-          await createRTC(false);if(!pc)return;await pc.setRemoteDescription(msg.sdp);await pc.setLocalDescription(await pc.createAnswer());queue({type:'answer',sdp:pc.localDescription.toJSON()});
-        }else if(msg.type==='answer' && pc){await pc.setRemoteDescription(msg.sdp);}
-        else if(msg.type==='ice'&&pc&&pc.remoteDescription)await pc.addIceCandidate(msg.candidate);
+          await createRTC(false);if(!pc)return;await pc.setRemoteDescription(msg.sdp);await flushIce();await pc.setLocalDescription(await pc.createAnswer());queue({type:'answer',sdp:pc.localDescription.toJSON()});
+        }else if(msg.type==='answer' && pc){await pc.setRemoteDescription(msg.sdp);await flushIce();}
+        else if(msg.type==='ice'){
+          if(pc&&pc.remoteDescription)await pc.addIceCandidate(msg.candidate);
+          else if(pendingIce.length<60)pendingIce.push(msg.candidate);
+        }
       }catch(e){console.warn('Peer connection:',e.message);}
     }
     let pendingDirect=new Map();
@@ -172,7 +177,7 @@ const VISOR = (() => {
     let paired=false;
     async function startRoom(pin,asGlasses,repeat){
       const myGen=++generation;const config=await roomConfig(pin);if(myGen!==generation)return;
-      if(code!==pin){resetRTC();reassembly.clear();pendingDirect.clear();seen.clear();paired=false;}
+      if(code!==pin){resetRTC();pendingIce=[];reassembly.clear();pendingDirect.clear();seen.clear();paired=false;}
       code=pin;room=config;const incoming=config.topic+(asGlasses?'/glasses':'/phone');const ok=await wire.subscribe(incoming);if(myGen!==generation)return;
       if(!ok){handleError(new Error('Relay subscription failed. Retry loading the page.'));return;}
       if(asGlasses){local({type:'room',code:pin});}
