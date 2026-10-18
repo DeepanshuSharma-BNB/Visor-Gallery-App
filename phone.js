@@ -1,7 +1,7 @@
 'use strict';
 const $=VISOR.$;
 const list=[];
-let selected=0, paired=false, online=false, joiningCode='', processing=false;
+let selected=0, paired=false, online=false, joiningCode='', processing=false, directAvailable=false;
 const status=$('status-pill'), pairStatus=$('pair-status'), count=$('count'), progress=$('progress');
 const gallery=$('grid'), now=$('now'), toast=$('toast');
 function notify(text,important=false){
@@ -94,7 +94,9 @@ async function receiveFiles(inputFiles){
 }
 const link=VISOR.connect(msg=>{
   switch(msg.type){
-    case 'joined':paired=true;joiningCode=msg.code;updateConnection();sendGallery();sendSelected();notify('Paired successfully. Photos are ready on the glasses.');break;
+    case 'joined':paired=true;joiningCode=msg.code;updateConnection();sendGallery();sendSelected();notify('Paired. Photos ready; establishing an optional direct encrypted connection.');break;
+    case 'direct':directAvailable=!!msg.available;$('video-progress').textContent=directAvailable?'● Direct encrypted video channel available':'○ Direct video channel unavailable. Photo mode still works.';break;
+    case 'video_progress':$('video-progress').textContent='Video transfer: '+Math.round(100*msg.bytes/msg.total)+'%';break;
     case 'disconnected':paired=false;updateConnection();notify('Glasses disconnected. Reopen the glasses app for a new code.',true);joiningCode='';$('auto-advance').checked=false;break;
     case 'error':notify(msg.message||'Pairing problem',true);break;
     case 'request':if(list[msg.index]){selected=msg.index;updateSelection();sendSelected();}break;
@@ -117,4 +119,21 @@ $('prev').onclick=()=>change(selected-1);
 $('next').onclick=()=>change(selected+1);
 $('clear').onclick=()=>{clearPhotos();notify('Gallery cleared from this session.');};
 $('auto-advance').onchange=e=>link.send({type:'play',enabled:e.target.checked});
+$('zoom-in').onclick=()=>link.send({type:'zoom',step:1});
+$('zoom-out').onclick=()=>link.send({type:'zoom',step:-1});
+$('zoom-reset').onclick=()=>link.send({type:'zoom',reset:true});
+$('video-file').onchange=async e=>{
+  const file=e.target.files?.[0];e.target.value='';if(!file)return;
+  if(!paired){notify('Pair your glasses first.',true);return;}
+  if(!directAvailable){notify('Direct peer connection is required for video. Try both devices on the same Wi-Fi, and keep the glasses page open.',true);return;}
+  $('video-progress').textContent='Transferring '+file.name+'…';
+  try{await link.sendVideo(file);notify('Video sent. If it does not start automatically, press Play on the glasses.');}
+  catch(err){notify(err.message,true);$('video-progress').textContent='Video transfer failed.';}
+};
+$('url-form').onsubmit=e=>{
+  e.preventDefault();if(!paired){notify('Pair your glasses first.',true);return;}
+  let url;try{url=new URL($('video-url').value.trim());}catch{notify('Invalid link.',true);return;}
+  if(!['http:','https:'].includes(url.protocol)||url.username||url.password||url.href.length>2000){notify('Please enter a valid HTTP(S) video link.',true);return;}
+  link.send({type:'video_link',url:url.href});notify('Link sent. Playback depends on the video website and glasses browser.');
+};
 updateConnection();updateSelection();
