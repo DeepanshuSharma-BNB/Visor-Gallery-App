@@ -83,9 +83,13 @@ const VISOR = (() => {
     async function receive(topic,payload){const current=room;if(!current)return;if(topic!==current.topic+(isGlasses?'/glasses':'/phone'))return;
       let envelope;try{envelope=await unseal(current.key,payload);}catch{return;}if(current!==room)return;
       const {sid,part,count,text}=envelope;if(typeof sid!=='string'||!Number.isInteger(part)||!Number.isInteger(count)||count<1||count>130||part<0||part>=count||typeof text!=='string'||text.length>17000)return;
-      let partial=reassembly.get(sid);if(!partial){partial={parts:new Array(count),at:Date.now()};reassembly.set(sid,partial);}
-      if(partial.parts.length!==count)return;partial.parts[part]=text;
-      if(partial.parts.every(x=>typeof x==='string')){reassembly.delete(sid);let msg;try{msg=JSON.parse(partial.parts.join(''));}catch{return;}
+      let partial=reassembly.get(sid);
+      if(!partial){partial={parts:new Array(count),received:0,at:Date.now()};reassembly.set(sid,partial);}
+      if(partial.parts.length!==count)return;
+      // Sparse Array.every() skips missing indexes and previously caused large photos
+      // to be parsed after only their first chunk. Track every received part explicitly.
+      if(partial.parts[part]===undefined){partial.parts[part]=text;partial.received++;}
+      if(partial.received===count){reassembly.delete(sid);let msg;try{msg=JSON.parse(partial.parts.join(''));}catch{return;}
         if(msg.type==='join'&&isGlasses){paired=true;local({type:'paired'});queue({type:'joined',code});}
         else if(msg.type==='joined'&&!isGlasses){paired=true;clearTimeout(pairTimer);local(msg);}
         else if(msg.type==='ping'){queue({type:'pong'});}
