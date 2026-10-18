@@ -1,142 +1,161 @@
 'use strict';
-const $=VISOR.$;
-const list=[];
-let selected=0, paired=false, online=false, joiningCode='', processing=false, directAvailable=false;
-const status=$('status-pill'), pairStatus=$('pair-status'), count=$('count'), progress=$('progress');
-const gallery=$('grid'), now=$('now'), toast=$('toast');
-function notify(text,important=false){
-  toast.textContent=text;toast.className=text?'toast'+(important?' danger':''):'';
+const $=VISOR.$,photos=[];
+let current=0,paired=false,online=false,processing=false,lastCode='',peerReady=false;
+const preview=$('now'),grid=$('grid'),toast=$('toast');
+function message(text,isError=false){
+  toast.textContent=text;toast.className=text?'control-alert'+(isError?' error':''):'';
 }
-function updateConnection(){
-  status.textContent=paired?'● Glasses connected':online?'● Ready to pair':'○ Disconnected';
-  status.className='pill'+(paired?' good':'');
+function pairingStatus(){
+  $('status-pill').textContent=paired?'● Connected':online?'● Ready to pair':'○ Reconnecting';
+  $('status-pill').className='connection-tag'+(paired?' connected':'');
   $('pair-btn').disabled=!online||paired;
-  pairStatus.textContent=paired?'Connected. Your selected photos are ready.':online?'Enter code shown on glasses.':'Connecting to secure test relay…';
+  $('pair-status').textContent=paired?'Your glasses are connected. Choose a picture.':online?'Enter the code from the glasses.':'Connecting to photo relay…';
+  $('transport').textContent=!paired?'Connection method will appear after pairing':peerReady?'● WebRTC active · direct encrypted transfer':'◇ AES-encrypted relay fallback · WebRTC connecting or unavailable';
 }
-function sendGallery(){if(paired)link.send({type:'gallery',items:list.map(p=>({name:p.name,width:p.width,height:p.height}))});}
-function sendSelected(){if(paired&&list[selected])link.send({type:'image',index:selected,data:list[selected].data});}
-function change(index){
-  if(!list.length)return;
-  selected=(index+list.length)%list.length;
-  updateSelection();sendSelected();
+function sendGallery(){
+  if(paired)link.send({type:'gallery',items:photos.map(x=>({name:x.name,width:x.width,height:x.height}))});
 }
-function updateSelection(){
-  const has=list.length>0;
+function showPhoto(){
+  if(paired&&photos[current])link.send({type:'image',index:current,data:photos[current].data});
+}
+function selectPhoto(index){
+  if(!photos.length)return;
+  current=(index+photos.length)%photos.length;
+  redrawSelection();showPhoto();
+}
+function redrawSelection(){
+  const has=photos.length>0;
+  $('counter').textContent=has?(current+1)+' / '+photos.length:'0 / 0';
+  $('count').textContent=has?photos.length+' photo'+(photos.length===1?'':'s')+' ready':'No photos selected';
   $('prev').disabled=!has;$('next').disabled=!has;$('clear').disabled=!has;
-  $('counter').textContent=has?(selected+1)+' / '+list.length:'0 / 0';
-  count.textContent=has?list.length+' photo'+(list.length!==1?'s':'')+' selected':'No photos selected';
-  if(has){now.replaceChildren(Object.assign(document.createElement('img'),{src:list[selected].data,alt:list[selected].name}));}
-  else{now.innerHTML='<span class="empty-icon">▧</span><p>Images will appear here</p>';}
-  [...gallery.children].forEach((button,i)=>{button.classList.toggle('selected',i===selected);button.setAttribute('aria-current',i===selected?'true':'false');});
+  preview.replaceChildren();
+  if(has){
+    const im=new Image();im.src=photos[current].data;im.alt=photos[current].name;
+    preview.append(im);
+  }else{
+    const empty=document.createElement('div');empty.className='preview-empty';
+    const mark=document.createElement('span');mark.textContent='▧';
+    const p=document.createElement('p');p.textContent='Your selected photograph will appear here';
+    empty.append(mark,p);preview.append(empty);
+  }
+  for(const [i,b] of [...grid.children].entries())b.classList.toggle('selected',i===current);
 }
-function drawGallery(){
-  gallery.replaceChildren();
-  list.forEach((item,i)=>{
-    const b=document.createElement('button');b.className='tile';b.type='button';b.setAttribute('role','listitem');b.setAttribute('aria-label','Show photo '+(i+1)+': '+item.name);
-    const img=document.createElement('img');img.src=item.thumb;img.alt='';img.loading='lazy';
-    const label=document.createElement('span');label.className='number';label.textContent=String(i+1);
-    b.append(img,label);b.onclick=()=>change(i);gallery.appendChild(b);
+function redrawGallery(){
+  grid.replaceChildren();
+  photos.forEach((img,i)=>{
+    const b=document.createElement('button');b.type='button';b.className='thumb';
+    b.setAttribute('aria-label','Display photo '+(i+1)+': '+img.name);
+    const pic=document.createElement('img');pic.src=img.thumb;pic.alt='';pic.loading='lazy';
+    const number=document.createElement('span');number.textContent=String(i+1);
+    b.append(pic,number);b.onclick=()=>selectPhoto(i);grid.append(b);
   });
-  updateSelection();
+  redrawSelection();
 }
-function clearPhotos(){list.length=0;selected=0;gallery.replaceChildren();updateSelection();link.send({type:'clear'});$('auto-advance').checked=false;link.send({type:'play',enabled:false});}
-function resizeToCanvas(source,width,height,maxSize){
-  const scale=Math.min(1,maxSize/Math.max(width,height));
-  const canvas=document.createElement('canvas');canvas.width=Math.max(1,Math.round(width*scale));canvas.height=Math.max(1,Math.round(height*scale));
-  const ctx=canvas.getContext('2d');ctx.fillStyle='#000';ctx.fillRect(0,0,canvas.width,canvas.height);ctx.drawImage(source,0,0,canvas.width,canvas.height);return canvas;
+function clearAll(){
+  photos.length=0;current=0;grid.replaceChildren();redrawSelection();
+  link.send({type:'clear'});message('Gallery cleared from this session.');
+}
+function canvasFor(image,w,h,maxEdge){
+  const scale=Math.min(1,maxEdge/Math.max(w,h));
+  const c=document.createElement('canvas');
+  c.width=Math.max(1,Math.round(w*scale));c.height=Math.max(1,Math.round(h*scale));
+  const ctx=c.getContext('2d',{alpha:false});if(!ctx)throw Error('Image rendering is unavailable');
+  ctx.fillStyle='#000';ctx.fillRect(0,0,c.width,c.height);ctx.drawImage(image,0,0,c.width,c.height);
+  return c;
 }
 async function decode(file){
   if(typeof createImageBitmap==='function'){
-    try{const bitmap=await createImageBitmap(file,{imageOrientation:'from-image'});return {source:bitmap,width:bitmap.width,height:bitmap.height,release:()=>bitmap.close()};}catch{}
+    try{
+      const img=await createImageBitmap(file,{imageOrientation:'from-image'});
+      return {src:img,w:img.width,h:img.height,release:()=>img.close()};
+    }catch{}
   }
-  const url=URL.createObjectURL(file);const image=new Image();
-  try{await new Promise((resolve,reject)=>{image.onload=resolve;image.onerror=reject;image.src=url;});return {source:image,width:image.naturalWidth,height:image.naturalHeight,release:()=>URL.revokeObjectURL(url)};}
-  catch(e){URL.revokeObjectURL(url);throw e;}
+  const url=URL.createObjectURL(file),img=new Image();
+  try{
+    await new Promise((resolve,reject)=>{img.onload=resolve;img.onerror=reject;img.src=url;});
+    return {src:img,w:img.naturalWidth,h:img.naturalHeight,release:()=>URL.revokeObjectURL(url)};
+  }catch(e){URL.revokeObjectURL(url);throw e;}
 }
-async function compress(file){
+async function preparePhoto(file){
   const decoded=await decode(file);
   try{
-    let cvs=resizeToCanvas(decoded.source,decoded.width,decoded.height,1250);
-    let data=cvs.toDataURL('image/jpeg',.77);
-    if(data.length>1150000){cvs=resizeToCanvas(decoded.source,decoded.width,decoded.height,920);data=cvs.toDataURL('image/jpeg',.63);}
-    if(data.length>1380000)throw Error('Picture is too large to stream');
-    const thumb=resizeToCanvas(decoded.source,decoded.width,decoded.height,230).toDataURL('image/jpeg',.68);
-    return {name:file.name||'Photo',data,thumb,width:decoded.width,height:decoded.height};
+    // No original-file limit: downscale/compress locally to keep zoom and transfer responsive.
+    // This strips camera EXIF/GPS metadata. JPEG output remains bounded for secure MQTT fallback.
+    let edge=2100,quality=.83,data='';
+    for(let attempt=0;attempt<8;attempt++){
+      const c=canvasFor(decoded.src,decoded.w,decoded.h,edge);
+      data=c.toDataURL('image/jpeg',quality);
+      if(data.length<=1450000)break;
+      edge=Math.max(850,Math.round(edge*.78));quality=Math.max(.55,quality-.045);
+    }
+    if(data.length>1450000)throw Error('Photo could not be compressed for transfer.');
+    const thumb=canvasFor(decoded.src,decoded.w,decoded.h,200).toDataURL('image/jpeg',.69);
+    return {name:file.name||'Photo',data,thumb,width:decoded.w,height:decoded.h};
   }finally{decoded.release();}
 }
-function makeDemo(n){
-  const canvas=document.createElement('canvas');canvas.width=1000;canvas.height=1000;const c=canvas.getContext('2d');
-  const palettes=[['#182b4e','#67a6ac','#e8d5b3'],['#30224e','#ea9b82','#f9ccaa'],['#102c29','#4c9b6f','#dbeda6'],['#3d2846','#d15b8d','#f3cd79']];
-  const [a,b,d]=palettes[n%palettes.length];
-  const g=c.createLinearGradient(0,0,1000,1000);g.addColorStop(0,a);g.addColorStop(1,b);c.fillStyle=g;c.fillRect(0,0,1000,1000);
-  c.globalAlpha=.7;c.fillStyle=d;c.beginPath();c.arc(300+n*65,290,155,0,Math.PI*2);c.fill();
-  c.globalAlpha=.43;for(let j=0;j<5;j++){c.beginPath();c.ellipse(650,780-j*95,290+j*26,60+j*3,Math.PI/8,0,2*Math.PI);c.fill();}
-  c.globalAlpha=1;c.fillStyle='#ffffff';c.font='700 27px sans-serif';c.fillText('VISOR / STUDY '+String(n+1).padStart(2,'0'),72,918);
-  const data=canvas.toDataURL('image/jpeg',.72);const thumb=resizeToCanvas(canvas,1000,1000,230).toDataURL('image/jpeg',.65);
-  return {name:'Demo composition '+(n+1),data,thumb,width:1000,height:1000};
+function demo(index){
+  const c=document.createElement('canvas');c.width=1050;c.height=1050;
+  const ctx=c.getContext('2d'),palettes=[['#1a3552','#76b9ad','#ffe5ba'],['#4b284c','#eb9975','#fff4c4'],['#112b30','#6aaf8b','#d6eebc'],['#323757','#e69cba','#f3d885']];
+  const [a,b,accent]=palettes[index%4],grad=ctx.createLinearGradient(0,0,1050,1050);
+  grad.addColorStop(0,a);grad.addColorStop(1,b);ctx.fillStyle=grad;ctx.fillRect(0,0,1050,1050);
+  ctx.fillStyle=accent;ctx.globalAlpha=.7;ctx.beginPath();ctx.arc(315+index*65,335,163,0,Math.PI*2);ctx.fill();
+  for(let i=0;i<5;i++){ctx.globalAlpha=.1+i*.09;ctx.beginPath();ctx.ellipse(660,800-i*92,260+i*25,62,Math.PI/7,0,Math.PI*2);ctx.fill();}
+  ctx.globalAlpha=1;ctx.fillStyle='white';ctx.font='bold 28px system-ui';ctx.fillText('VISOR  /  '+String(index+1).padStart(2,'0'),70,977);
+  return {name:'Demo '+(index+1),data:c.toDataURL('image/jpeg',.8),thumb:canvasFor(c,1050,1050,200).toDataURL('image/jpeg',.72),width:1050,height:1050};
 }
-async function receiveFiles(inputFiles){
+async function loadPhotos(input){
   if(processing)return;
-  const files=Array.from(inputFiles).filter(f=>f.type.startsWith('image/')).slice(0,60);
-  if(!files.length){notify('No supported pictures were selected.',true);return;}
+  const files=Array.from(input).filter(f=>f.type.startsWith('image/')).slice(0,80);
+  if(!files.length){message('Select at least one supported picture.',true);return;}
   processing=true;$('files').disabled=true;$('demo-btn').disabled=true;
-  notify('');list.length=0;gallery.replaceChildren();selected=0;
-  let failures=0;
+  photos.length=0;grid.replaceChildren();current=0;message('Preparing photos locally…');
+  let skipped=0;
   for(let i=0;i<files.length;i++){
-    progress.textContent=(i+1)+' / '+files.length;
-    try{list.push(await compress(files[i]));}
-    catch(e){failures++;console.warn('Could not load image:',files[i].name,e);}
-    if(i%4===3)await new Promise(r=>setTimeout(r,0));
+    $('progress').textContent=(i+1)+' / '+files.length;
+    try{photos.push(await preparePhoto(files[i]));}
+    catch(e){skipped++;console.warn('Unsupported photo:',files[i].name,e.message);}
+    if(i%3===2)await new Promise(resolve=>setTimeout(resolve,0));
   }
-  processing=false;$('files').disabled=false;$('demo-btn').disabled=false;progress.textContent='';
-  drawGallery();sendGallery();sendSelected();
-  notify(failures?list.length+' loaded, '+failures+' skipped. Unsupported photo formats may need JPG conversion.':list.length+' photos ready to browse.');
+  processing=false;$('files').disabled=false;$('demo-btn').disabled=false;$('progress').textContent='';
+  redrawGallery();sendGallery();showPhoto();
+  message(photos.length+' photos ready'+(skipped?' · '+skipped+' skipped':'')+'.');
 }
 const link=VISOR.connect(msg=>{
   switch(msg.type){
-    case 'joined':paired=true;joiningCode=msg.code;updateConnection();sendGallery();sendSelected();notify('Paired. Photos ready; establishing an optional direct encrypted connection.');break;
-    case 'direct':directAvailable=!!msg.available;$('video-progress').textContent=directAvailable?'● Direct encrypted video channel available':'○ Direct video channel unavailable. Photo mode still works.';break;
-    case 'video_progress':$('video-progress').textContent='Video transfer: '+Math.round(100*msg.bytes/msg.total)+'%';break;
-    case 'disconnected':paired=false;updateConnection();notify('Glasses disconnected. Reopen the glasses app for a new code.',true);joiningCode='';$('auto-advance').checked=false;break;
-    case 'error':notify(msg.message||'Pairing problem',true);break;
-    case 'request':if(list[msg.index]){selected=msg.index;updateSelection();sendSelected();}break;
-    case 'navigate':change(selected+msg.direction);break;
-    case 'play_state':$('auto-advance').checked=msg.enabled;break;
+    case 'joined':
+      paired=true;lastCode=msg.code;pairingStatus();sendGallery();showPhoto();
+      message('Paired! The selected photo is ready on your glasses.');break;
+    case 'direct':
+      peerReady=!!msg.available;pairingStatus();break;
+    case 'disconnected':
+      paired=false;peerReady=false;lastCode='';pairingStatus();
+      message('Session ended. Reopen the glasses viewer and pair again.',true);break;
+    case 'navigate':selectPhoto(current+(msg.direction===-1?-1:1));break;
+    case 'request':
+      if(Number.isInteger(msg.index)&&msg.index>=0&&msg.index<photos.length)selectPhoto(msg.index);break;
+    case 'error':message(msg.message||'Connection failed.',true);break;
   }
 },state=>{
-  online=state==='online';
-  if(!online){paired=false;updateConnection();}
-  else{updateConnection();if(joiningCode){link.send({type:'join',code:joiningCode});}}
+  online=state==='online';if(!online){paired=false;peerReady=false;}
+  pairingStatus();
+  if(online&&lastCode&&!paired)link.send({type:'join',code:lastCode});
 });
-$('pair-form').onsubmit=event=>{
-  event.preventDefault();const code=$('pin').value.toUpperCase().replace(/[^A-Z2-9]/g,'');
-  if(code.length!==12){notify('Please enter a 12-character code.',true);return;}
-  joiningCode=code;link.send({type:'join',code});pairStatus.textContent='Pairing…';
+$('pair-form').onsubmit=e=>{
+  e.preventDefault();
+  const code=$('pin').value.toUpperCase().replace(/[^A-Z2-9]/g,'');
+  if(code.length!==12){message('Enter the entire 12-character code.',true);return;}
+  lastCode=code;link.send({type:'join',code});$('pair-status').textContent='Pairing…';
 };
-$('files').addEventListener('change',e=>{receiveFiles(e.target.files);e.target.value='';});
-$('demo-btn').onclick=()=>{list.length=0;for(let i=0;i<4;i++)list.push(makeDemo(i));selected=0;drawGallery();sendGallery();sendSelected();notify('Four demo images loaded.');};
-$('prev').onclick=()=>change(selected-1);
-$('next').onclick=()=>change(selected+1);
-$('clear').onclick=()=>{clearPhotos();notify('Gallery cleared from this session.');};
-$('auto-advance').onchange=e=>link.send({type:'play',enabled:e.target.checked});
+$('files').onchange=e=>{loadPhotos(e.target.files);e.target.value='';};
+$('demo-btn').onclick=()=>{
+  photos.length=0;for(let i=0;i<4;i++)photos.push(demo(i));
+  current=0;redrawGallery();sendGallery();showPhoto();message('Demo pictures ready.');
+};
+$('prev').onclick=()=>selectPhoto(current-1);
+$('next').onclick=()=>selectPhoto(current+1);
+$('clear').onclick=clearAll;
 $('zoom-in').onclick=()=>link.send({type:'zoom',step:1});
-$('seek-back').onclick=()=>link.send({type:'video_command',action:'seek',seconds:-10});
-$('seek-forward').onclick=()=>link.send({type:'video_command',action:'seek',seconds:10});
-$('video-toggle').onclick=()=>link.send({type:'video_command',action:'toggle'});
 $('zoom-out').onclick=()=>link.send({type:'zoom',step:-1});
 $('zoom-reset').onclick=()=>link.send({type:'zoom',reset:true});
-$('video-file').onchange=async e=>{
-  const file=e.target.files?.[0];e.target.value='';if(!file)return;
-  if(!paired){notify('Pair your glasses first.',true);return;}
-  if(!directAvailable){notify('Direct peer connection is required for video. Try both devices on the same Wi-Fi, and keep the glasses page open.',true);return;}
-  $('video-progress').textContent='Transferring '+file.name+'…';
-  try{await link.sendVideo(file);notify('Video sent. If it does not start automatically, press Play on the glasses.');}
-  catch(err){notify(err.message,true);$('video-progress').textContent='Video transfer failed.';}
-};
-$('url-form').onsubmit=e=>{
-  e.preventDefault();if(!paired){notify('Pair your glasses first.',true);return;}
-  let url;try{url=new URL($('video-url').value.trim());}catch{notify('Invalid link.',true);return;}
-  if(!['http:','https:'].includes(url.protocol)||url.username||url.password||url.href.length>2000){notify('Please enter a valid HTTP(S) video link.',true);return;}
-  link.send({type:'video_link',url:url.href});notify('Link sent. Playback depends on the video website and glasses browser.');
-};
-updateConnection();updateSelection();
+window.addEventListener('pagehide',()=>link.close());
+pairingStatus();redrawSelection();
