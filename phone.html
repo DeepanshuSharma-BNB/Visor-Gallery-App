@@ -1,9 +1,63 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#080b11"><title>Phone · Visor Gallery</title><link rel="icon" href="favicon.svg"><link rel="stylesheet" href="styles.css?v=sec3"></head><body><div class="phone"><header><a class="mark" href="./"><span class="mark-symbol">◈</span> VISOR GALLERY</a><span id="status-pill" class="pill">Connecting...</span></header><div class="welcome"><div class="eyebrow">PHONE CONTROLLER / 01</div><h1>A little gallery,<br>right in your glasses.</h1><p>Pick photos from your phone, pair with the code shown on your glasses, and tap a thumbnail to show it instantly. Nothing is automatically uploaded from your gallery. Only pictures you choose are sent.</p></div><div class="phone-layout"><aside class="panel"><h2>01 / Pair your glasses</h2><p>Open Visor Gallery on your glasses. Enter the 12-character code that appears on the display.</p><form id="pair-form" class="pin-row"><input id="pin" name="pin" type="text" maxlength="15" autocomplete="off" spellcheck="false" autocapitalize="characters" placeholder="ABCD EFGH JKLM" aria-label="Glasses pairing code" required><button id="pair-btn" class="action" type="submit">Pair</button></form><div class="connect-status" id="pair-status" aria-live="polite">Not paired</div><div class="divider"></div><h2>02 / Choose photos</h2><p>Select up to 60 pictures. They are resized on your phone and transferred for display only after you pair.</p><label class="upload-label"><span class="upload-icon">▧</span><span><strong>Select images from gallery</strong><span>JPG, PNG, WebP and supported image formats</span></span><input id="files" type="file" accept="image/*" multiple></label><div class="stat-row"><span id="count">No photos selected</span><span id="progress"></span></div><button id="demo-btn" class="action ghost" type="button" style="width:100%;margin-top:7px">Try with demo pictures</button><div class="divider"></div><h2>03 / Play a video</h2>
- <p>Transfer a local MP4 or WebM video (up to 25 MB) over a direct encrypted WebRTC connection, if supported on both devices. No video file is uploaded to GitHub.</p>
- <label class="upload-label"><span class="upload-icon">▶</span><span><strong>Select a video</strong><span>MP4, WebM or OGG · max 25 MB · direct connection required</span></span><input id="video-file" type="file" accept="video/mp4,video/webm,video/ogg,video/quicktime"></label>
- <div id="video-progress" class="connect-status" aria-live="polite">Waiting for peer-to-peer connection...</div><div class="controls"><button type="button" id="seek-back" class="action ghost">−10 sec</button><button type="button" id="video-toggle" class="action soft">Play/Pause</button><button type="button" id="seek-forward" class="action ghost">+10 sec</button></div>
- <p>Or paste a supported public video URL. Direct MP4/WebM, YouTube and Vimeo are supported where embedding is permitted. X posts and other pages are experimental.</p>
- <form id="url-form" class="pin-row"><input id="video-url" type="url" style="font-size:13px;letter-spacing:0;text-align:left" placeholder="https://..." aria-label="Video URL" required><button class="action" type="submit">Show</button></form>
- <div class="controls"><button id="zoom-out" class="action ghost" type="button">− Zoom</button><button id="zoom-reset" class="action ghost" type="button">1×</button><button id="zoom-in" class="action ghost" type="button">+ Zoom</button></div>
- <p class="helper">The video website itself may learn your glasses' IP address when loaded. Site restrictions, cookies, DRM, and unsupported codecs cannot be bypassed.</p>
- <div class="divider"></div><label class="switch"><input type="checkbox" id="auto-advance"><span class="muted" style="font-size:12px">Slideshow (4 seconds per picture)</span></label><span class="helper">Tip: keep this browser tab open while viewing. Locking your phone may pause the connection. The shared public test relay is for experiments, not highly sensitive pictures.</span></aside><section class="panel"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px"><div><div class="eyebrow">LIVE PREVIEW</div><h2 style="margin:7px 0 12px">Showing on glasses</h2></div><span id="counter" class="pill">0 / 0</span></div><div id="now" class="now"><span class="empty-icon">▧</span><p>Images will appear here</p></div><div class="controls"><button id="prev" class="action ghost" type="button" disabled>← Previous</button><button id="next" class="action soft" type="button" disabled>Next →</button><button id="clear" class="action ghost" type="button" disabled>Clear</button></div><div id="toast" aria-live="polite"></div><div id="grid" class="preview-grid" role="list" aria-label="Selected images"></div></section></div></div><script src="common.js?v=20261018-sec3"></script><script src="phone.js?v=20261018-sec3"></script></body></html>
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0a0e14"><meta name="description" content="Select and browse photos in your Meta Ray-Ban Display glasses">
+<title>Visor Gallery · Phone & Computer</title><link rel="icon" href="favicon.svg">
+<link rel="stylesheet" href="styles.css?v=photo3">
+</head><body class="controller-body">
+<main class="controller">
+ <header class="control-header">
+  <a class="logo" href="./" aria-label="Visor Gallery homepage"><span class="logo-emblem">◈</span><span>VISOR <small>GALLERY</small></span></a>
+  <span id="status-pill" class="connection-tag">Connecting…</span>
+ </header>
+ <section class="control-intro">
+  <div class="eyebrow">PERSONAL DISPLAY · PHOTO VIEWER</div>
+  <h1>See more.<br><span>Without distractions.</span></h1>
+  <p>Send the pictures you choose from your phone or computer directly into your glasses. Swipe to browse and pinch-and-move to zoom.</p>
+ </section>
+ <div class="control-columns">
+  <section class="control-card side-panel">
+   <div class="panel-number">01 <span>CONNECT</span></div>
+   <h2>Pair your glasses</h2>
+   <p>Open Visor Gallery in your glasses. Enter the 12-character code shown there.</p>
+   <form id="pair-form" class="pair-form">
+    <input id="pin" type="text" inputmode="text" maxlength="15" placeholder="ABCD EFGH JKLM" autocomplete="off" autocapitalize="characters" spellcheck="false" aria-label="Pairing code" required>
+    <button id="pair-btn" type="submit" class="control-button primary">Connect</button>
+   </form>
+   <p id="pair-status" class="small-status" aria-live="polite">Waiting for connection…</p>
+   <div id="transport" class="connection-method">Secure channel status appears after pairing</div>
+   <div class="fine-line"></div>
+   <div class="panel-number">02 <span>YOUR PHOTOS</span></div>
+   <h2>Choose pictures</h2>
+   <label class="file-drop">
+    <span class="file-symbol">▧</span><span><b>Select photos</b><small>From your gallery or computer files</small></span>
+    <input id="files" type="file" accept="image/*" multiple>
+   </label>
+   <div class="file-meta"><span id="count">No photos selected</span><span id="progress"></span></div>
+   <button id="demo-btn" type="button" class="control-button secondary wide">Load demo pictures</button>
+   <div class="fine-line"></div>
+   <h2>Control zoom</h2>
+   <div class="zoom-bar" role="group" aria-label="Zoom remote controls">
+    <button id="zoom-out" type="button" class="control-button secondary">−</button>
+    <button id="zoom-reset" type="button" class="control-button secondary">Reset 1×</button>
+    <button id="zoom-in" type="button" class="control-button secondary">+</button>
+   </div>
+   <div class="control-tip">On glasses: swipe left/right to change pictures. Swipe up/down to zoom, or pinch and move vertically. Pinch once to toggle magnification.</div>
+   <div class="privacy-tip">Photos stay in your browser session. The app prefers encrypted WebRTC, with an encrypted public-relay fallback when direct connection is unavailable. Avoid highly sensitive images.</div>
+  </section>
+  <section class="control-card gallery-panel">
+   <div class="gallery-title"><div><div class="panel-number">03 <span>LIVE VIEW</span></div><h2>Glasses preview</h2></div><span id="counter" class="count-badge">0 / 0</span></div>
+   <div id="now" class="preview"><div class="preview-empty"><span>▧</span><p>Your selected photograph will appear here</p></div></div>
+   <div class="gallery-toolbar">
+    <button id="prev" type="button" class="control-button secondary" disabled>← Previous</button>
+    <button id="next" type="button" class="control-button primary" disabled>Next →</button>
+    <button id="clear" type="button" class="control-button ghost" disabled>Clear</button>
+   </div>
+   <div id="toast" aria-live="polite"></div>
+   <div id="grid" class="thumbnails" role="list" aria-label="Selected photos"></div>
+  </section>
+ </div>
+ <footer class="control-footer">VISOR GALLERY · Made for Meta Ray-Ban Display · Photo-only edition</footer>
+</main>
+<script src="common.js?v=photo3"></script><script src="phone.js?v=photo3"></script>
+</body></html>
