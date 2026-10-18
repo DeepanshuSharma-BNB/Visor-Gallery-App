@@ -1,52 +1,60 @@
 # Visor Gallery
 
-A personal photo viewer for Meta Ray-Ban Display glasses. Choose photos on your Android phone, pair with a temporary code shown in the glasses, and browse photos using the Neural Band.
+A personal photo and video viewer for Meta Ray-Ban Display glasses. Choose photos on Android or a desktop browser, pair with a temporary code, and browse using the Meta Neural Band.
 
-## Live GitHub Pages URLs
+**Experimental v2. Not security-audited. A public MQTT test broker is still used for encrypted signaling and photo fallback.**
+
+## App links
 
 - **Glasses:** https://deepanshusharma-bnb.github.io/Visor-Gallery-App/glasses.html
-- **Phone:** https://deepanshusharma-bnb.github.io/Visor-Gallery-App/phone.html
-- **Home:** https://deepanshusharma-bnb.github.io/Visor-Gallery-App/
+- **Phone or computer:** https://deepanshusharma-bnb.github.io/Visor-Gallery-App/phone.html
+- **Homepage:** https://deepanshusharma-bnb.github.io/Visor-Gallery-App/
 
 ## Setup
 
-1. In Meta AI, open Devices → Display glasses settings → App connections → Web apps → Add a web app.
-2. Add the **Glasses** URL and name the app **Visor Gallery**.
-3. Open the app in your glasses. A temporary 12-character pairing code should appear.
-4. On your Android phone, open the **Phone** URL in Chrome.
-5. Enter the pairing code and tap **Pair**.
-6. Choose photos from your gallery, or press **Try with demo pictures**.
-7. Use Neural Band left/right gestures or the on-screen buttons to change photos. Use Play for a slideshow.
+1. Add the glasses URL in the Meta AI app's **Devices → Display glasses settings → App connections → Web apps**.
+2. Open Visor Gallery on the glasses.
+3. Open the phone/computer URL in a browser and enter the 12-character code from your glasses.
+4. Select images or choose demo photos.
+5. Use left/right gestures to change photos; up/down changes magnification (1×–5×). You can also zoom from your phone/computer.
+6. For video, wait until the phone interface reports a **direct encrypted video channel**, then select an MP4, WebM or OGG file smaller than **25 MB**.
+7. Alternatively, paste a public **HTTPS video link**. Supported cases include direct MP4/WebM/OGG URLs and provider embeds.
 
-Keep the phone controller open. Android can pause background tabs and interrupt transmission.
+## Video link support
 
-## Privacy and technical notes
+- **Direct HTTPS .mp4, .webm and .ogg URLs:** HTML5 video playback in glasses where codec and server policies allow.
+- **YouTube:** privacy-enhanced YouTube embedded player. A particular video may disallow embedding, require login, or fail due to device/browser restrictions.
+- **Vimeo:** official Vimeo player embedded through its video URL.
+- **X/Twitter:** an individual public post may display via an embed; video playback is **not guaranteed**.
+- **Other video websites:** a sandboxed embedded page is attempted. Many sites prevent iframes, require sign-in, use DRM, or don't permit cross-site playback. There is no universal player for every URL.
+- Remote videos are loaded by the **glasses browser itself**, so the video site can receive the glasses' IP address and other network metadata.
 
-This is an **experimental prototype**, not a fully audited production app.
+## Local video transfer
 
-- Your gallery is not automatically scanned. You explicitly choose images.
-- Photos are resized and JPEG-compressed in the phone browser.
-- Photo payloads are encrypted using Web Crypto (AES-GCM, key derived from the pairing code).
-- Both clients communicate through an **external public EMQX MQTT test broker** over encrypted WebSocket transport.
-- The broker can see traffic metadata; it is not an appropriate service for confidential or sensitive photos. Do not use patient data or unpublished research images.
-- The photos are not committed to GitHub or intentionally retained on the broker, but neither public-broker reliability nor browser-cache behavior can be guaranteed.
-- Device compatibility with the glasses' web browser and firmware has not yet been confirmed through an on-device test.
-- JPEG, PNG, WebP and other formats work if your phone browser supports decoding them; HEIC support varies.
-- If the pairing code doesn't appear, confirm that the glasses can access the public relay, then reload.
-- If the glasses and phone cannot pair, confirm that the 12 characters match and keep both views open.
+Video files travel **only over the direct WebRTC data channel**, secured in transit by WebRTC DTLS. The encrypted MQTT broker is used for session signaling and optional image fallback, not for transferring local video files. This requires WebRTC support and network connectivity on **both devices**. A direct connection might fail across certain NATs, firewalls, browser versions, or the glasses' Web App runtime. There is no TURN relay included. No cloud video transcoding or DRM bypass is implemented.
+
+For best compatibility start with a **small H.264/AAC MP4 file** on the same Wi-Fi network, keeping both web pages open. If the glasses browser cannot decode a codec, video playback may fail even after successful transfer.
+
+## Security and privacy model
+
+- Pairing uses a fresh random **12-character code** generated by the glasses.
+- The code derives an **AES-256-GCM encryption key via PBKDF2-SHA-256**. MQTT signaling and any MQTT photo fallback are encrypted by the application before reaching the public broker.
+- Peer-to-peer photo and video traffic uses WebRTC DTLS when the data channel is available. Peers may still exchange network connection metadata during the encrypted setup.
+- Pairing expires after **30 minutes** and can be refreshed by restarting the app.
+- The app avoids persistent gallery storage. Files selected on your device are kept in browser memory for the current session. The Clear button releases photo references; closing pages ends an active session. Browser caching and third-party infrastructure practices cannot be universally guaranteed.
+- Public broker: `wss://broker.emqx.io:8084/mqtt`. Other broker users can observe room topic identifiers and traffic metadata. We cannot guarantee broker logging or other retention policies.
+- This is **not a private-server deployment** and has **not been security audited**. Avoid patient images, identity documents, confidential research, or highly sensitive videos.
+- If you'd like stronger privacy and reliable video connectivity, deploy a private, authenticated signaling service plus a TURN server under your control.
 
 ## Repository files
 
-- `index.html`: app landing page
-- `phone.html`, `phone.js`: phone gallery picker and controls
-- `glasses.html`, `glasses.js`: glasses viewer and gesture navigation
-- `common.js`: encrypted room pairing and MQTT/WebSocket communication
-- `styles.css`: layouts for phone and glasses
-- `favicon.svg`: Visor icon
-- `.github/workflows/pages.yml`: deployment using GitHub Actions
+- `index.html`: landing page
+- `phone.html`, `phone.js`: controller, local image/video picker, video URLs, zoom and playback controls
+- `glasses.html`, `glasses.js`: media viewer and Neural Band inputs
+- `common.js`: encrypted temporary pairing, MQTT signaling, WebRTC peer transport, media transfer
+- `styles.css`: responsive phone and glasses UI
+- `.github/workflows/pages.yml`: deployment using GitHub Pages
 
-## Enable publishing if necessary
+## Testing status
 
-In repository **Settings → Pages**, select **GitHub Actions** as the build and deployment source. Once the workflow succeeds, open the URLs above.
-
-GitHub Pages serves static files only; the public relay is external. For higher privacy and reliability, replace the demonstration MQTT broker with a private authenticated relay.
+JavaScript syntax and required HTML element IDs have been verified. Existing photo functionality was previously confirmed by an actual device test. The updated video, peer-to-peer, zoom and embed features **still require on-device testing** and should not be described as hardware-verified until then.
