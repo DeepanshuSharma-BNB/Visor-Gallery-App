@@ -56,12 +56,12 @@ function toast(message){
 }
 function showPair(){
   clearMedia();zoom=1;image.style.transform='scale(1)';
-  screen.classList.remove('hidden');waiting.classList.add('hidden');image.classList.remove('visible');bottom.classList.add('hidden');
+  screen.classList.remove('hidden');waiting.classList.add('hidden');image.classList.remove('visible');image.removeAttribute('src');bottom.classList.add('hidden');
   $('code').textContent=currentCode?currentCode.slice(0,4)+' '+currentCode.slice(4,8)+' '+currentCode.slice(8):'···· ···· ····';
 }
 function showWait(){
   clearMedia();
-  screen.classList.add('hidden');waiting.classList.remove('hidden');image.classList.remove('visible');bottom.classList.add('hidden');
+  screen.classList.add('hidden');waiting.classList.remove('hidden');image.classList.remove('visible');image.removeAttribute('src');bottom.classList.add('hidden');
 }
 function stopPlay(){
   playing=false;clearInterval(interval);interval=null;$('pause').textContent='▶ Play';
