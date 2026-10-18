@@ -5,7 +5,7 @@
 'use strict';
 const VISOR = (() => {
   const BROKERS = ['wss://broker.emqx.io:8084/mqtt'];
-  const CHANNEL = 'visor-gallery-v3';
+  const CHANNEL = 'visor-gallery-v4';
   const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   const te = new TextEncoder(), td = new TextDecoder();
   const $ = id => document.getElementById(id);
@@ -21,9 +21,9 @@ const VISOR = (() => {
   async function roomConfig(code){
     // The public broker only sees a hashed room identifier, not the secret pairing code.
     const digest=new Uint8Array(await crypto.subtle.digest('SHA-256',te.encode(CHANNEL+':room:'+code)));
-    const topic = 'visor/gallery/v3/'+[...digest].slice(0,18).map(x=>x.toString(16).padStart(2,'0')).join('');
+    const topic = 'visor/gallery/v4/'+[...digest].slice(0,18).map(x=>x.toString(16).padStart(2,'0')).join('');
     const material=await crypto.subtle.importKey('raw',te.encode(code),'PBKDF2',false,['deriveKey']);
-    const key=await crypto.subtle.deriveKey({name:'PBKDF2',salt:te.encode(CHANNEL+':key'),iterations:160000,hash:'SHA-256'},material,{name:'AES-GCM',length:256},false,['encrypt','decrypt']);
+    const key=await crypto.subtle.deriveKey({name:'PBKDF2',salt:te.encode(CHANNEL+':key'),iterations:300000,hash:'SHA-256'},material,{name:'AES-GCM',length:256},false,['encrypt','decrypt']);
     return {topic,key};
   }
   async function seal(key,message){const iv=randomBytes(12);const ciphertext=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv},key,te.encode(JSON.stringify(message))));return concat(iv,ciphertext);}
@@ -53,7 +53,104 @@ const VISOR = (() => {
   function connect(onMessage,onState){
     const isGlasses = /(^|\/)glasses\.html$/.test(location.pathname);
     let room=null, code='', connected=false, desiredCode='', pairTimer=null, seq=0;
-    let sending=Promise.resolve();let reassembly=new Map();let generation=0;let heartbeat=null,lastPong=0;
+    let sending=Promise.resolve(),directSending=Promise.resolve();let reassembly=new Map();let generation=0;let heartbeat=null,lastPong=0;
+    let pc=null,dc=null,directReady=false,media=null,mediaParts=[],mediaBytes=0,mediaStarted=0;
+    let seen=new Map();const MAX_VIDEO=25*1024*1024;
+    function resetRTC(){
+      directReady=false;if(dc){try{dc.close()}catch{}}if(pc){try{pc.close()}catch{}}
+      dc=null;pc=null;media=null;mediaParts=[];mediaBytes=0;
+    }
+    function directPacket(obj){if(!dc||dc.readyState!=='open')return;const raw=JSON.stringify(obj);if(raw.length>16000)return;
+      dc.send(raw);
+    }
+    function setupChannel(channel){
+      dc=channel;dc.binaryType='arraybuffer';dc.bufferedAmountLowThreshold=131072;
+      dc.onopen=()=>{directReady=true;local({type:'direct',available:true});};
+      dc.onclose=()=>{directReady=false;local({type:'direct',available:false});};
+      dc.onerror=()=>{directReady=false;local({type:'direct',available:false});};
+      dc.onmessage=async e=>{
+        if(typeof e.data==='string'){
+          let msg;try{msg=JSON.parse(e.data)}catch{return;}
+          if(msg.type==='mstart'){
+            if(!Number.isInteger(msg.size)||msg.size<1||msg.size>MAX_VIDEO||typeof msg.mime!=='string'||!/^video\/(mp4|webm|ogg|quicktime)$/i.test(msg.mime))return;
+            media={size:msg.size,mime:msg.mime,name:String(msg.name||'Video').slice(0,100)};mediaParts=[];mediaBytes=0;mediaStarted=Date.now();
+            local({type:'video_progress',bytes:0,total:media.size});
+          }else if(msg.type==='mend'){
+            if(media && mediaBytes===media.size){const video=new Blob(mediaParts,{type:media.mime});local({type:'video_ready',blob:video,name:media.name});}
+            else local({type:'error',message:'Incomplete video transfer. Please retry.'});
+            media=null;mediaParts=[];mediaBytes=0;
+          }else if(msg.type==='dchunk') handleDirectChunk(msg);
+          return;
+        }
+        if(!media)return;const b=e.data instanceof Blob?await e.data.arrayBuffer():e.data;if(!(b instanceof ArrayBuffer))return;
+        if(mediaBytes+b.byteLength>media.size){media=null;mediaParts=[];mediaBytes=0;return;}
+        mediaParts.push(b);mediaBytes+=b.byteLength;
+        if(mediaBytes%262144 < b.byteLength)local({type:'video_progress',bytes:mediaBytes,total:media.size});
+      };
+    }
+    async function createRTC(initiator){
+      if(typeof RTCPeerConnection==='undefined'){local({type:'direct',available:false});return;}
+      resetRTC();
+      try{
+        const peer=new RTCPeerConnection({iceServers:[{urls:'stun:stun.l.google.com:19302'}]});pc=peer;
+        peer.onicecandidate=e=>{if(e.candidate)queue({type:'ice',candidate:e.candidate.toJSON()});};
+        peer.onconnectionstatechange=()=>{if(['failed','closed','disconnected'].includes(peer.connectionState)&&directReady){directReady=false;local({type:'direct',available:false});}};
+        peer.ondatachannel=e=>setupChannel(e.channel);
+        if(initiator){setupChannel(peer.createDataChannel('visor-v4',{ordered:true}));await peer.setLocalDescription(await peer.createOffer());queue({type:'offer',sdp:peer.localDescription.toJSON()});}
+      }catch(e){local({type:'direct',available:false});}
+    }
+    async function rtcSignal(msg){
+      try{
+        if(msg.type==='offer'){
+          await createRTC(false);if(!pc)return;await pc.setRemoteDescription(msg.sdp);await pc.setLocalDescription(await pc.createAnswer());queue({type:'answer',sdp:pc.localDescription.toJSON()});
+        }else if(msg.type==='answer' && pc){await pc.setRemoteDescription(msg.sdp);}
+        else if(msg.type==='ice'&&pc&&pc.remoteDescription)await pc.addIceCandidate(msg.candidate);
+      }catch(e){console.warn('Peer connection:',e.message);}
+    }
+    let pendingDirect=new Map();
+    function handleDirectChunk(msg){
+      const {sid,part,count,text}=msg;
+      if(typeof sid!=='string'||sid.length>40||!Number.isInteger(count)||count<1||count>300||!Number.isInteger(part)||part<0||part>=count||typeof text!=='string'||text.length>15000)return;
+      let x=pendingDirect.get(sid);if(!x){x={parts:new Array(count),have:0,at:Date.now()};pendingDirect.set(sid,x);}
+      if(x.parts.length!==count)return;
+      if(x.parts[part]===undefined){x.parts[part]=text;x.have++;}
+      if(x.have===count){pendingDirect.delete(sid);try{local(JSON.parse(x.parts.join('')))}catch{}}
+      if(pendingDirect.size>30)for(const [k,v] of pendingDirect)if(Date.now()-v.at>20000)pendingDirect.delete(k);
+    }
+    function sendDirect(msg){
+      if(!directReady||!dc)return false;
+      const text=JSON.stringify(msg),n=Math.ceil(text.length/12000);
+      if(n>300)return false;
+      const sid=b64(randomBytes(9)).replace(/[^a-zA-Z0-9]/g,'');
+      directSending=directSending.catch(()=>{}).then(async()=>{
+        for(let i=0;i<n;i++){
+          if(!dc||dc.readyState!=='open')return;
+          while(dc.bufferedAmount>450000&&dc.readyState==='open')await new Promise(r=>setTimeout(r,25));
+          directPacket({type:'dchunk',sid,part:i,count:n,text:text.slice(i*12000,(i+1)*12000)});
+        }
+      });
+      return true;
+    }
+    async function sendVideo(file){
+      if(!paired)throw Error('Pair your glasses before sending video.');
+      if(!directReady||!dc)throw Error('Direct video channel not available. Keep both browsers open and try again. Some networks block peer-to-peer connections.');
+      if(!file||file.size<1||file.size>MAX_VIDEO)throw Error('Select a video smaller than 25 MB.');
+      let mime=file.type.toLowerCase();if(!/^video\/(mp4|webm|ogg|quicktime)$/.test(mime))throw Error('Use MP4, WebM or OGG video.');
+      directSending=directSending.catch(()=>{}).then(async()=>{
+        directPacket({type:'mstart',size:file.size,mime,name:file.name});
+        for(let offset=0;offset<file.size;offset+=12000){
+          if(!dc||dc.readyState!=='open')throw Error('Video channel disconnected.');
+          while(dc.bufferedAmount>450000){
+            if(dc.readyState!=='open')throw Error('Video connection lost');
+            await new Promise(r=>setTimeout(r,35));
+          }
+          dc.send(await file.slice(offset,Math.min(file.size,offset+12000)).arrayBuffer());
+          if(offset%245760<12000)local({type:'video_progress',bytes:offset,total:file.size});
+        }
+        directPacket({type:'mend'});local({type:'video_progress',bytes:file.size,total:file.size});
+      });
+      return directSending;
+    }
     const handleError = error => onMessage({type:'error',message:error?.message||'Connection failed'});
     const wire = new MqttConnection(receive, state => {
       connected=state==='online';onState(state);
@@ -75,6 +172,7 @@ const VISOR = (() => {
     let paired=false;
     async function startRoom(pin,asGlasses,repeat){
       const myGen=++generation;const config=await roomConfig(pin);if(myGen!==generation)return;
+      if(code!==pin){resetRTC();reassembly.clear();pendingDirect.clear();seen.clear();paired=false;}
       code=pin;room=config;const incoming=config.topic+(asGlasses?'/glasses':'/phone');const ok=await wire.subscribe(incoming);if(myGen!==generation)return;
       if(!ok){handleError(new Error('Relay subscription failed. Retry loading the page.'));return;}
       if(asGlasses){local({type:'room',code:pin});}
@@ -90,20 +188,25 @@ const VISOR = (() => {
       // to be parsed after only their first chunk. Track every received part explicitly.
       if(partial.parts[part]===undefined){partial.parts[part]=text;partial.received++;}
       if(partial.received===count){reassembly.delete(sid);let msg;try{msg=JSON.parse(partial.parts.join(''));}catch{return;}
+        if(seen.has(sid))return;seen.set(sid,Date.now());
+        if(seen.size>400){for(const [k,t] of seen)if(Date.now()-t>180000)seen.delete(k);}
         if(msg.type==='join'&&isGlasses){paired=true;local({type:'paired'});queue({type:'joined',code});}
-        else if(msg.type==='joined'&&!isGlasses){paired=true;clearTimeout(pairTimer);local(msg);}
+        else if(msg.type==='joined'&&!isGlasses){paired=true;clearTimeout(pairTimer);local(msg);createRTC(true).catch(handleError);}
         else if(msg.type==='ping'){queue({type:'pong'});}
         else if(msg.type==='pong'){lastPong=Date.now();}
+        else if(paired&&['offer','answer','ice'].includes(msg.type)){rtcSignal(msg);}
         else if(paired){local(msg);}
       }
-      if(reassembly.size>100){for(const [key,val] of reassembly)if(Date.now()-val.at>20000)reassembly.delete(key);}
+      if(reassembly.size>40){for(const [key,val] of reassembly)if(Date.now()-val.at>120000)reassembly.delete(key);}
     }
     heartbeat=setInterval(()=>{if(connected&&room&&paired){queue({type:'ping'});if(lastPong && Date.now()-lastPong>23000){paired=false;local({type:'disconnected'});}}},6000);
     function send(msg){if(msg.type==='create'&&isGlasses){if(!connected)return;paired=false;lastPong=0;startRoom(randomCode(),true,false).catch(handleError);return;}
       if(msg.type==='join'&&!isGlasses){desiredCode=(msg.code||'').toUpperCase();if(!connected)return;paired=false;lastPong=0;startRoom(desiredCode,false,false).catch(handleError);return;}
-      if(!paired)return;queue(msg);
+      if(!paired)return;
+      if(!['offer','answer','ice','ping','pong','join','joined'].includes(msg.type)&&sendDirect(msg))return;
+      queue(msg);
     }
-    return {send,close(){clearInterval(heartbeat);clearTimeout(pairTimer);wire.close();}};
+    return {send,sendVideo,get directReady(){return directReady;},close(){resetRTC();clearInterval(heartbeat);clearTimeout(pairTimer);wire.close();}};
   }
   return {connect,$};
 })();
