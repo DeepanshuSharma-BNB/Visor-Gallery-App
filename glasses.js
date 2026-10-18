@@ -46,6 +46,7 @@ function showPhoto(msg){
   current=idx;resetView();
   photo.src=msg.data;photo.alt=items[idx].name||'Gallery image';
   pair.classList.add('hidden');waiting.classList.add('hidden');photo.classList.add('visible');
+  try{stage.focus({preventScroll:true});}catch{}
 }
 function navigate(direction){
   if(!paired||!items.length)return;
