@@ -1,6 +1,6 @@
-/* Visor Gallery: minimal MQTT 3.1.1 client + encrypted, ephemeral photo transport.
- * For experiments only. Uses the publicly accessible EMQX MQTT test broker.
- * Avoid sensitive photos; a public broker is not a personal production service.
+/* Visor Gallery: encrypted photo exchange. WebRTC direct channel preferred;
+ * encrypted MQTT test relay is used for pairing/signaling and fallback.
+ * Experimental. Not for confidential media.
  */
 'use strict';
 const VISOR = (() => {
@@ -55,12 +55,12 @@ const VISOR = (() => {
     const isGlasses = /(^|\/)glasses\.html$/.test(location.pathname);
     let room=null, code='', connected=false, desiredCode='', pairTimer=null, seq=0,pairedAt=0;
     let sending=Promise.resolve(),directSending=Promise.resolve();let reassembly=new Map();let generation=0;let heartbeat=null,lastPong=0;
-    let pc=null,dc=null,directReady=false,media=null,mediaParts=[],mediaBytes=0,mediaStarted=0;
+    let pc=null,dc=null,directReady=false;
     let pendingIce=[];
-    let seen=new Map();const MAX_VIDEO=25*1024*1024;
+    let seen=new Map();
     function resetRTC(){
       directReady=false;if(dc){try{dc.close()}catch{}}if(pc){try{pc.close()}catch{}}
-      dc=null;pc=null;media=null;mediaParts=[];mediaBytes=0;
+      dc=null;pc=null;
     }
     function directPacket(obj){if(!dc||dc.readyState!=='open')return;const raw=JSON.stringify(obj);if(raw.length>16000)return;
       dc.send(raw);
@@ -70,24 +70,11 @@ const VISOR = (() => {
       dc.onopen=()=>{directReady=true;local({type:'direct',available:true});};
       dc.onclose=()=>{directReady=false;local({type:'direct',available:false});};
       dc.onerror=()=>{directReady=false;local({type:'direct',available:false});};
-      dc.onmessage=async e=>{
-        if(typeof e.data==='string'){
-          let msg;try{msg=JSON.parse(e.data)}catch{return;}
-          if(msg.type==='mstart'){
-            if(!Number.isInteger(msg.size)||msg.size<1||msg.size>MAX_VIDEO||typeof msg.mime!=='string'||!/^video\/(mp4|webm|ogg|quicktime)$/i.test(msg.mime))return;
-            media={size:msg.size,mime:msg.mime,name:String(msg.name||'Video').slice(0,100)};mediaParts=[];mediaBytes=0;mediaStarted=Date.now();
-            local({type:'video_progress',bytes:0,total:media.size});
-          }else if(msg.type==='mend'){
-            if(media && mediaBytes===media.size){const video=new Blob(mediaParts,{type:media.mime});local({type:'video_ready',blob:video,name:media.name});}
-            else local({type:'error',message:'Incomplete video transfer. Please retry.'});
-            media=null;mediaParts=[];mediaBytes=0;
-          }else if(msg.type==='dchunk') handleDirectChunk(msg);
-          return;
-        }
-        if(!media)return;const b=e.data instanceof Blob?await e.data.arrayBuffer():e.data;if(!(b instanceof ArrayBuffer))return;
-        if(mediaBytes+b.byteLength>media.size){media=null;mediaParts=[];mediaBytes=0;return;}
-        mediaParts.push(b);mediaBytes+=b.byteLength;
-        if(mediaBytes%262144 < b.byteLength)local({type:'video_progress',bytes:mediaBytes,total:media.size});
+      dc.onmessage=e=>{
+        // Direct channel accepts only bounded, JSON-encoded photo/control fragments.
+        if(typeof e.data!=='string'||e.data.length>17000)return;
+        let message;try{message=JSON.parse(e.data)}catch{return;}
+        if(message?.type==='dchunk')handleDirectChunk(message);
       };
     }
     async function createRTC(initiator){
@@ -136,26 +123,6 @@ const VISOR = (() => {
         }
       });
       return true;
-    }
-    async function sendVideo(file){
-      if(!paired)throw Error('Pair your glasses before sending video.');
-      if(!directReady||!dc)throw Error('Direct video channel not available. Keep both browsers open and try again. Some networks block peer-to-peer connections.');
-      if(!file||file.size<1||file.size>MAX_VIDEO)throw Error('Select a video smaller than 25 MB.');
-      let mime=file.type.toLowerCase();if(!/^video\/(mp4|webm|ogg|quicktime)$/.test(mime))throw Error('Use MP4, WebM or OGG video.');
-      directSending=directSending.catch(()=>{}).then(async()=>{
-        directPacket({type:'mstart',size:file.size,mime,name:file.name});
-        for(let offset=0;offset<file.size;offset+=12000){
-          if(!dc||dc.readyState!=='open')throw Error('Video channel disconnected.');
-          while(dc.bufferedAmount>450000){
-            if(dc.readyState!=='open')throw Error('Video connection lost');
-            await new Promise(r=>setTimeout(r,35));
-          }
-          dc.send(await file.slice(offset,Math.min(file.size,offset+12000)).arrayBuffer());
-          if(offset%245760<12000)local({type:'video_progress',bytes:offset,total:file.size});
-        }
-        directPacket({type:'mend'});local({type:'video_progress',bytes:file.size,total:file.size});
-      });
-      return directSending;
     }
     const handleError = error => onMessage({type:'error',message:error?.message||'Connection failed'});
     const wire = new MqttConnection(receive, state => {
@@ -212,7 +179,7 @@ const VISOR = (() => {
       if(!['offer','answer','ice','ping','pong','join','joined'].includes(msg.type)&&sendDirect(msg))return;
       queue(msg);
     }
-    return {send,sendVideo,get directReady(){return directReady;},close(){resetRTC();clearInterval(heartbeat);clearTimeout(pairTimer);wire.close();}};
+    return {send,get directReady(){return directReady;},close(){resetRTC();clearInterval(heartbeat);clearTimeout(pairTimer);wire.close();}};
   }
   return {connect,$};
 })();
