@@ -46,13 +46,14 @@ const VISOR = (() => {
       }}
     raw(bytes){if(this.ready&&this.ws?.readyState===WebSocket.OPEN)this.ws.send(bytes);}
     subscribe(topic){this.topics.add(topic);if(!this.ready)return Promise.resolve(false);return new Promise(resolve=>{const id=++this.packetId%65535||1;this.subs.set(id,resolve);this.raw(packet(0x82,concat(be16(id),str(topic),new Uint8Array([0]))));setTimeout(()=>{if(this.subs.has(id)){this.subs.delete(id);resolve(false);}},7000);});}
+    unsubscribe(topic){this.topics.delete(topic);if(this.ready){const id=++this.packetId%65535||1;this.raw(packet(0xA2,concat(be16(id),str(topic))));}}
     publish(topic,payload){if(!this.ready)return false;this.raw(packet(0x30,concat(str(topic),payload)));return true;}
     close(){this.closed=true;clearTimeout(this.retry);clearInterval(this.keep);if(this.ready)this.raw(packet(0xE0,new Uint8Array(0)));this.ws?.close();}
   }
 
   function connect(onMessage,onState){
     const isGlasses = /(^|\/)glasses\.html$/.test(location.pathname);
-    let room=null, code='', connected=false, desiredCode='', pairTimer=null, seq=0;
+    let room=null, code='', connected=false, desiredCode='', pairTimer=null, seq=0,pairedAt=0;
     let sending=Promise.resolve(),directSending=Promise.resolve();let reassembly=new Map();let generation=0;let heartbeat=null,lastPong=0;
     let pc=null,dc=null,directReady=false,media=null,mediaParts=[],mediaBytes=0,mediaStarted=0;
     let pendingIce=[];
@@ -177,7 +178,7 @@ const VISOR = (() => {
     let paired=false;
     async function startRoom(pin,asGlasses,repeat){
       const myGen=++generation;const config=await roomConfig(pin);if(myGen!==generation)return;
-      if(code!==pin){resetRTC();pendingIce=[];reassembly.clear();pendingDirect.clear();seen.clear();paired=false;}
+      if(code!==pin){if(room)wire.unsubscribe(room.topic+(asGlasses?'/glasses':'/phone'));resetRTC();pendingIce=[];reassembly.clear();pendingDirect.clear();seen.clear();paired=false;pairedAt=0;}
       code=pin;room=config;const incoming=config.topic+(asGlasses?'/glasses':'/phone');const ok=await wire.subscribe(incoming);if(myGen!==generation)return;
       if(!ok){handleError(new Error('Relay subscription failed. Retry loading the page.'));return;}
       if(asGlasses){local({type:'room',code:pin});}
@@ -195,8 +196,8 @@ const VISOR = (() => {
       if(partial.received===count){reassembly.delete(sid);let msg;try{msg=JSON.parse(partial.parts.join(''));}catch{return;}
         if(seen.has(sid))return;seen.set(sid,Date.now());
         if(seen.size>400){for(const [k,t] of seen)if(Date.now()-t>180000)seen.delete(k);}
-        if(msg.type==='join'&&isGlasses){paired=true;local({type:'paired'});queue({type:'joined',code});}
-        else if(msg.type==='joined'&&!isGlasses){paired=true;clearTimeout(pairTimer);local(msg);createRTC(true).catch(handleError);}
+        if(msg.type==='join'&&isGlasses){paired=true;pairedAt=Date.now();local({type:'paired'});queue({type:'joined',code});}
+        else if(msg.type==='joined'&&!isGlasses){paired=true;pairedAt=Date.now();clearTimeout(pairTimer);local(msg);createRTC(true).catch(handleError);}
         else if(msg.type==='ping'){queue({type:'pong'});}
         else if(msg.type==='pong'){lastPong=Date.now();}
         else if(paired&&['offer','answer','ice'].includes(msg.type)){rtcSignal(msg);}
@@ -204,7 +205,7 @@ const VISOR = (() => {
       }
       if(reassembly.size>40){for(const [key,val] of reassembly)if(Date.now()-val.at>120000)reassembly.delete(key);}
     }
-    heartbeat=setInterval(()=>{if(connected&&room&&paired){queue({type:'ping'});if(lastPong && Date.now()-lastPong>23000){paired=false;local({type:'disconnected'});}}},6000);
+    heartbeat=setInterval(()=>{if(connected&&room&&paired){if(Date.now()-pairedAt>30*60*1000){paired=false;pairedAt=0;resetRTC();if(isGlasses)startRoom(randomCode(),true,false).catch(handleError);else local({type:'disconnected'});return;}queue({type:'ping'});if(lastPong && Date.now()-lastPong>23000){paired=false;local({type:'disconnected'});}}},6000);
     function send(msg){if(msg.type==='create'&&isGlasses){if(!connected)return;paired=false;lastPong=0;startRoom(randomCode(),true,false).catch(handleError);return;}
       if(msg.type==='join'&&!isGlasses){desiredCode=(msg.code||'').toUpperCase();if(!connected)return;paired=false;lastPong=0;startRoom(desiredCode,false,false).catch(handleError);return;}
       if(!paired)return;
