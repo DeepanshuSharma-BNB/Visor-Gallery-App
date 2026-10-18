@@ -120,6 +120,9 @@ $('next').onclick=()=>change(selected+1);
 $('clear').onclick=()=>{clearPhotos();notify('Gallery cleared from this session.');};
 $('auto-advance').onchange=e=>link.send({type:'play',enabled:e.target.checked});
 $('zoom-in').onclick=()=>link.send({type:'zoom',step:1});
+$('seek-back').onclick=()=>link.send({type:'video_command',action:'seek',seconds:-10});
+$('seek-forward').onclick=()=>link.send({type:'video_command',action:'seek',seconds:10});
+$('video-toggle').onclick=()=>link.send({type:'video_command',action:'toggle'});
 $('zoom-out').onclick=()=>link.send({type:'zoom',step:-1});
 $('zoom-reset').onclick=()=>link.send({type:'zoom',reset:true});
 $('video-file').onchange=async e=>{
