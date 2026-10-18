@@ -16,6 +16,7 @@ button:focus-visible,input:focus-visible,a:focus-visible{outline:2px solid var(-
    Do not introduce toolbars while an image is visible. */
 html:has(.glass-body),body.glass-body{width:100%;height:100%;overflow:hidden;background:#000}
 body.glass-body{height:100dvh;touch-action:none;overscroll-behavior:none;user-select:none;-webkit-user-select:none}
+.glass-viewer:focus{outline:none}
 .glass-viewer{position:relative;width:100%;height:100%;overflow:hidden;background:#000;touch-action:none}
 .glass-image{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;
   pointer-events:none;display:none;transform-origin:50% 50%;will-change:transform}
